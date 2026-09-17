@@ -1,7 +1,11 @@
 """Extrait les cookies x.com du profil Chrome (macOS, chiffrement v10 Keychain)."""
 import sqlite3, subprocess, hashlib, os, shutil, tempfile, json
 
-CHROME = os.path.expanduser("~/Library/Application Support/Google/Chrome/Default/Cookies")
+import glob
+# Chrome range les profils sous Default/, Profile 1/, Profile 5/… et le nom change
+# quand on en crée ou supprime. On lit donc tous les profils, et on garde la
+# session x.com utilisée le plus récemment.
+CHROME = os.path.expanduser("~/Library/Application Support/Google/Chrome")
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.json")
 
 def _key():
@@ -45,22 +49,32 @@ def x_cookies(names=("auth_token", "ct0"), forcer=False):
 
 
 def _depuis_chrome(names=("auth_token", "ct0")):
-    tmp = tempfile.mktemp()
-    shutil.copy2(CHROME, tmp)
+    fichiers = [f for f in glob.glob(os.path.join(CHROME, "*", "Cookies"))
+                if "Guest Profile" not in f and "System Profile" not in f]
+    if not fichiers:
+        return {}
     key = _key()
-    got = {}
-    try:
-        db = sqlite3.connect(tmp)
-        q = ("select name, encrypted_value from cookies where host_key like '%x.com'"
-             " and name in (" + ",".join("?" * len(names)) + ")")
-        for name, val in db.execute(q, names):
-            v = _decrypt(val, key)
-            if v:
-                got[name] = v
-        db.close()
-    finally:
-        os.remove(tmp)
-    return got
+    meilleur, recent = {}, -1
+    for fichier in fichiers:
+        tmp = tempfile.mktemp()
+        shutil.copy2(fichier, tmp)
+        try:
+            db = sqlite3.connect(tmp)
+            q = ("select name, encrypted_value, last_access_utc from cookies"
+                 " where host_key like '%x.com' and name in ("
+                 + ",".join("?" * len(names)) + ")")
+            got, acces = {}, -1
+            for name, val, last in db.execute(q, names):
+                v = _decrypt(val, key)
+                if v:
+                    got[name] = v
+                    acces = max(acces, last or 0)
+            db.close()
+        finally:
+            os.remove(tmp)
+        if all(n in got for n in names) and acces > recent:
+            meilleur, recent = got, acces
+    return meilleur
 
 if __name__ == "__main__":
     for k, v in x_cookies().items():
