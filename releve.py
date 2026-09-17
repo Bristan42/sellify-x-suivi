@@ -191,8 +191,13 @@ def releve(forcer_cookies=False):
     vieux = min((_dtx(q["date"]) for q in liste if q["date"]), default=None)
     limite = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=90)
     total = (p.get("tweet_counts") or {}).get("tweets", (p.get("legacy") or {}).get("statuses_count", 0))
-    # on n'a le droit de s'arrêter que si on a tout le compte, ou 90 jours pleins
-    if len(liste) < total and (vieux is None or vieux > limite):
+    # on n'a le droit de s'arrêter que si on a tout le compte, ou 90 jours pleins.
+    # « Tout le compte » = on est remonté jusqu'au jour de sa création : X compte
+    # aussi les posts supprimés dans son total, qui ne sera donc jamais atteint.
+    cree = core.get("created_at") or lg.get("created_at")
+    debut = _dtx(cree) + dt.timedelta(days=1) if cree else None
+    depuis_creation = vieux is not None and debut is not None and vieux <= debut
+    if len(liste) < total and not depuis_creation and (vieux is None or vieux > limite):
         raise SystemExit("collecte incomplète (%d posts sur %d, plus ancien %s) — "
                          "rien n'est posté ni archivé"
                          % (len(liste), total, vieux.date() if vieux else "?"))
